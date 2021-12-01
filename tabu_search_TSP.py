@@ -9,9 +9,11 @@ import random
 import time
 import gurobipy as gp
 from matplotlib import pyplot as plt
+import numpy as np
 
 class Instance:
     def __init__(self,n):
+        random.seed(1)
         self.n = n
         self.points = []
         for i in range(n):
@@ -27,8 +29,24 @@ class Instance:
                 # self.cost[j][i] = math.sqrt(math.fabs(self.points[i][0]-self.points[j][0])**2 + math.fabs(self.points[i][1]-self.points[j][1])**2)
 
 class Solve:
-    def initial_route(self,instance):
+    #昇順
+    def initial_route1(self,instance):
         route = list(range(instance.n))
+        return route
+    #ランダム
+    def initial_route2(self,instance):
+        route = list(range(instance.n))
+        random.shuffle(route)
+        return route
+    #貪欲法
+    def initial_route3(self,instance):
+        route = [0]
+        for i in range(instance.n-1):
+            copy_list = instance.cost[route[-1]].copy()
+            for j in route:
+                copy_list[j] = 9999
+            index = copy_list.index(min(copy_list))
+            route.append(index)
         return route
     def cal_cost(self,route,instance):
         sum_cost = 0
@@ -63,6 +81,7 @@ class Solve:
             delta -= (self.get_cost(index_j - 1, index_j, route, instance) + self.get_cost(index_j, index_j + 1, route, instance))
             delta += (self.get_cost(index_i - 1, index_j, route, instance) + self.get_cost(index_j, index_i + 1, route, instance))
         return delta
+    #交換近傍を用いた近傍探索
     def local_search1(self, ini_route, iteration, instance):
         n = instance.n
         best = 999999
@@ -113,12 +132,14 @@ class Solve:
         result['cost'] = best
         result['iteration_values'] = iteration_values
         return result
+    #タブーリスト
     def tabu_append(self, tabu_length, tabu_list, opration):
         if len(tabu_list) >= tabu_length:
             tabu_list.pop(0)
         tabu_list.append(opration)
         # tabu_list.append([opration[1],opration[0]])
         return tabu_list
+    #交換近傍を用いたタブーサーチ
     def tabu_search1(self, ini_route, iteration, instance, tabu_length):
         n = instance.n
         tabu_list = list()
@@ -176,7 +197,6 @@ class Solve:
     #2-opt近傍
     def cal_neighbor2(self, index_i, index_j, route, instance):
         n = instance.n
-        #print(index_i-1,index_i,index_j,index_j+1)
         ### i,j:都市のID
         ### index_i,index_j:route上の都市i,jのインデクス
         ### index_i < index_j
@@ -187,6 +207,7 @@ class Solve:
             delta -= (self.get_cost(index_i - 1, index_i, route, instance) + self.get_cost(index_j, index_j + 1, route, instance))
             delta += (self.get_cost(index_i - 1, index_j, route, instance) + self.get_cost(index_i, index_j + 1, route, instance))
         return delta
+    #2-opt近傍を用いた近傍探索
     def local_search2(self, ini_route, iteration, instance):
         n = instance.n
         best = 999999
@@ -235,6 +256,7 @@ class Solve:
         result['cost'] = best
         result['iteration_values'] = iteration_values
         return result
+    #2-opt近傍用タブーリスト
     def tabu_append2(self, tabu_length, tabu_list, opration):
         if len(tabu_list) >= tabu_length:
             tabu_list.pop(0)
@@ -242,6 +264,7 @@ class Solve:
         tabu_list.append(opration[1])
         # tabu_list.append([opration[1],opration[0]])
         return tabu_list
+    #2-opt近傍を用いたタブーサーチ
     def tabu_search2(self, ini_route, iteration, instance, tabu_length):
         n = instance.n
         tabu_list = list()
@@ -274,12 +297,6 @@ class Solve:
                         local += delta
                         flag = True
                         break
-                    # else:
-                    #     if neighbor[1] < 0:
-                    #         delta = neighbor[1]
-                    #         local += delta
-                    #         flag = True
-                            
             if flag:
                 #解の更新
                 index_i = nid_index_i
@@ -303,37 +320,31 @@ class Solve:
         result['cost'] = best
         result['iteration_values'] = iteration_values
         return result
+    #Gurobiを用いた厳密解法
     def Gurobi(self,instance,iteration):
-        model = gp.Model(name='TSP')
-        model.Params.outputFlag = 0
         n = instance.n
-        x = [[0] * n for i in range(n)]
-        cost = [[0] * n for i in range(n)]
-        for i in range(n):
-            for j in range(i+1,n):
-                x[i][j] = model.addVar(lb = 0, ub = 1, vtype = gp.GRB.BINARY,name='x'+str(i)+'_'+str(j))
-                x[j][i] = x[i][j]
-                cost[i][j] = instance.cost[i][j]
-                cost[j][i] = cost[i][j]
-        u = [0] * n
-        for i in range(n):
-            u[i] = model.addVar(lb = 1, ub = n - 1, vtype = gp.GRB.INTEGER,name='u'+str(i))
-        model.setObjective(gp.quicksum((cost[i][j]*x[i][j] for i in range(n) for j in range(i,n))))
-        for index in range(n):
-            model.addConstr(gp.quicksum(x[i][index] for i in range(n)) == 1,name = "con1_"+str(index))
-        for index in range(n):
-            model.addConstr(gp.quicksum(x[index][j] for j in range(n)) == 1,name = "con2_"+str(index))
-        BigM = 99999
-        for i in range(n):
-            for j in range(i+1,n):
-                model.addConstr(u[i] + 1.0 - BigM * (1.0 - x[i][j]) <= u[j],name = "con3_"+str(i)+"_"+str(j))
-        model.update()
-        model.optimize()
+        cost = np.array(instance.cost)
+        #the big M
+        M = 10000
+        tsp = gp.Model("traveling_salesman")
+        tsp.Params.outputFlag = 0
+        x = tsp.addVars(n, n, vtype=gp.GRB.BINARY, name = "x")
+        u = tsp.addVars(n, name = "u")
+        # Set objective
+        tsp.setObjective( gp.quicksum(cost[i,j]*x[i,j] for i in range(n) for j in range(n)), gp.GRB.MINIMIZE)
+        # Assignment constraints:
+        tsp.addConstrs(( gp.quicksum(x[i,j] for j in range(n)) == 1 for i in range(n) ))         
+        tsp.addConstrs(( gp.quicksum(x[i,j] for i in range(n)) == 1 for j in range(n) ))
+        # Subtour-breaking constraints:
+        tsp.addConstrs(( u[i] + 1 - u[j] <= M*(1 - x[i,j])  for i in range(n) for j in range(1,n) ))
+        # Solving the model
+        tsp.optimize()
         result = dict()
-        result['cost'] = model.ObjVal
-        iteration_values = [model.ObjVal] * iteration
+        result['cost'] = tsp.ObjVal
+        iteration_values = [tsp.ObjVal] * iteration
         result['iteration_values'] = iteration_values
         return result
+    #結果のプロット
     def plot(self,local_result1,tabu_result1,local_result2,tabu_result2,gurobi_result,iteration):
         fig, ax = plt.subplots()
         x = list(range(iteration))
@@ -356,42 +367,50 @@ class Solve:
 
 def main():
     probrem_size = 30
-    tabu_length = 10
+    tabu_length = 15
     instance = Instance(probrem_size)
-    iteration = 50
+    iteration = 100
     solve = Solve()
-    ini_route = solve.initial_route(instance)
-    
-    t = time.time()
-    local_result1 = solve.local_search1(ini_route, iteration, instance)
-    #print(local_result1['tour'])
-    print(local_result1['cost'])
-    print(time.time()-t,'(s)')
-    print()
-    
-    t = time.time()
-    tabu_result1 = solve.tabu_search1(ini_route, iteration, instance, tabu_length)
-    #print(tabu_result1['tour'])
-    print(tabu_result1['cost'])
-    print(time.time()-t,'(s)')
-    print()
-    
-    t = time.time()
-    local_result2 = solve.local_search2(ini_route, iteration, instance)
-    #print(local_result2['tour'])
-    print(local_result2['cost'])
-    print(time.time()-t,'(s)')
-    print()
-    
-    t = time.time()
-    tabu_result2 = solve.tabu_search2(ini_route, iteration, instance, tabu_length)
-    #print(tabu_result2['tour'])
-    print(tabu_result2['cost'])
-    print(time.time()-t,'(s)')
-    print()
-    
-    gurobi_result = solve.Gurobi(instance,iteration)
-    solve.plot(local_result1,tabu_result1,local_result2,tabu_result2,gurobi_result,iteration)
+    ini_route1 = solve.initial_route1(instance)
+    ini_routes = [ini_route1]
+    # ini_route2 = solve.initial_route2(instance)
+    # ini_route3 = solve.initial_route3(instance)
+    # ini_routes = [ini_route1,ini_route2,ini_route3]
+    for ini_route in ini_routes:
+        t = time.time()
+        local_result1 = solve.local_search1(ini_route, iteration, instance)
+        print("交換近傍を用いた局所探索")
+        # print(local_result1['tour'])
+        print('目的関数値 : '+str(local_result1['cost']))
+        print(time.time()-t,'(s)')
+        print()
+        
+        t = time.time()
+        tabu_result1 = solve.tabu_search1(ini_route, iteration, instance, tabu_length)
+        print("交換近傍を用いたタブーサーチ")
+        # print(tabu_result1['tour'])
+        print('目的関数値 : '+str(tabu_result1['cost']))
+        print(time.time()-t,'(s)')
+        print()
+        
+        t = time.time()
+        local_result2 = solve.local_search2(ini_route, iteration, instance)
+        print("2-opt近傍を用いた局所探索")
+        # print(local_result2['tour'])
+        print('目的関数値 : '+str(local_result2['cost']))
+        print(time.time()-t,'(s)')
+        print()
+        
+        t = time.time()
+        tabu_result2 = solve.tabu_search2(ini_route, iteration, instance, tabu_length)
+        print("2-opt近傍を用いたタブーサーチ")
+        # print(tabu_result2['tour'])
+        print('目的関数値 : '+str(tabu_result2['cost']))
+        print(time.time()-t,'(s)')
+        print()
+        
+        gurobi_result = solve.Gurobi(instance,iteration)
+        solve.plot(local_result1,tabu_result1,local_result2,tabu_result2,gurobi_result,iteration)
     
 if __name__ == '__main__':
     main()
