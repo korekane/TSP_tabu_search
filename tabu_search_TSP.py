@@ -13,7 +13,7 @@ import numpy as np
 
 class Instance:
     def __init__(self,n):
-        random.seed(1)
+        random.seed(11)
         self.n = n
         self.points = []
         for i in range(n):
@@ -340,6 +340,7 @@ class Solve:
         # Solving the model
         tsp.optimize()
         result = dict()
+        print("厳密解　コスト",tsp.ObjVal)
         result['cost'] = tsp.ObjVal
         iteration_values = [tsp.ObjVal] * iteration
         result['iteration_values'] = iteration_values
@@ -367,7 +368,7 @@ class Solve:
 
 def main():
     probrem_size = 30
-    tabu_length = 15
+    tabu_length = 30
     instance = Instance(probrem_size)
     iteration = 100
     solve = Solve()
